@@ -1,0 +1,11 @@
+# Codex 工作目录
+.agents/
+
+# 编译产物（别人下载源码后自己编译）
+*.exe
+*.dll
+
+# SDL2 开发包（编译时用的，不是源码的一部分）
+SDL2/
+SDL2-devel-2.30.9-mingw.zip
+SDL2_BUILD_README.md
