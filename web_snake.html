@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Snake</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #0f0f1a, #1a1a2e);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: #e0e0e0;
+}
+.container {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 16px;
+  padding: 32px 40px;
+  box-shadow: 0 8px 48px rgba(0,0,0,0.5);
+  text-align: center;
+}
+h1 {
+  font-size: 26px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 6px;
+  text-transform: uppercase;
+  margin-bottom: 18px;
+}
+.info-bar {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 4px 10px 4px;
+  font-size: 13px;
+  color: #888;
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  margin-bottom: 12px;
+}
+.info-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.value {
+  color: #fff;
+  font-weight: 600;
+  font-size: 15px;
+}
+.boost-badge {
+  color: #ffab00;
+  font-weight: 700;
+  font-size: 11px;
+  margin-left: 4px;
+}
+canvas {
+  display: block;
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.06), 0 4px 24px rgba(0,0,0,0.6);
+}
+.controls-hint {
+  margin-top: 14px;
+  font-size: 12px;
+  color: #555;
+  letter-spacing: 0.3px;
+}
+kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  margin: 0 1px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 3px;
+  font-size: 11px;
+  font-family: inherit;
+  color: #888;
+}
+.sep {
+  color: #333;
+  margin: 0 6px;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Snake</h1>
+  <div class="info-bar">
+    <span class="info-item">Score: <span class="value" id="score">0</span></span>
+    <span class="info-item">Grade: <span class="value" id="grade">1</span></span>
+    <span class="info-item"><span class="value" id="speed">500</span>ms<span class="boost-badge" id="boostBadge" style="display:none">BOOST</span></span>
+  </div>
+  <canvas id="game" width="528" height="528"></canvas>
+  <div class="controls-hint">
+    <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> 移动 <span class="sep">·</span>
+    <kbd>Space</kbd> 暂停 <span class="sep">·</span>
+    <kbd>Shift</kbd> 加速 <span class="sep">·</span>
+    <kbd>R</kbd> 重开
+  </div>
+</div>
+
+<script>
+(function() {
+  // ---- constants (exact match to C++ SDL2 version) ----
+  const GRID_W = 22;
+  const GRID_H = 22;
+  const CELL = 24;
+  const TICK_INITIAL = 500;
+  const TICK_MIN = 80;
+  const TICK_PER_FOOD = 5;
+  const GRADE_EVERY = 8;
+  const SCORE_PER_FOOD = 100;
+
+  // ---- canvas ----
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+
+  // ---- DOM refs ----
+  const scoreEl = document.getElementById('score');
+  const gradeEl = document.getElementById('grade');
+  const speedEl = document.getElementById('speed');
+  const boostBadge = document.getElementById('boostBadge');
+
+  // ---- helpers ----
+  function inBounds(x, y) {
+    return x >= 1 && x <= GRID_W - 2 && y >= 1 && y <= GRID_H - 2;
+  }
+
+  function fillCell(gx, gy) {
+    ctx.fillRect(gx * CELL, gy * CELL, CELL, CELL);
+  }
+
+  // ---- game state ----
+  let snake = [];
+  let dir = { x: 0, y: 0 };
+  let alive = false;
+  let paused = false;
+  let gameOver = false;
+  let gameOverMsg = '';
+  let grade = 1;
+  let score = 0;
+  let tickMs = TICK_INITIAL;
+  let totalEaten = 0;
+  let food = null;
+  let eatenSinceGrade = 0;
+  let lastTick = 0;
+  let shiftPressed = false;
+
+  // ---- spawn food (random on free cells) ----
+  function spawnFood() {
+    const free = (GRID_W - 2) * (GRID_H - 2) - snake.length;
+    if (free <= 0) return null;
+    while (true) {
+      const x = 1 + Math.floor(Math.random() * (GRID_W - 2));
+      const y = 1 + Math.floor(Math.random() * (GRID_H - 2));
+      if (!snake.some(p => p.x === x && p.y === y)) return { x, y };
+    }
+  }
+
+  // ---- init / reset ----
+  function init() {
+    snake = [
+      { x: 1, y: 2 },
+      { x: 2, y: 2 },
+      { x: 3, y: 2 },
+      { x: 4, y: 2 }
+    ];
+    dir = { x: 1, y: 0 };
+    alive = true;
+    paused = false;
+    gameOver = false;
+    gameOverMsg = '';
+    grade = 1;
+    score = 0;
+    tickMs = TICK_INITIAL;
+    totalEaten = 0;
+    eatenSinceGrade = 4;  // offset so first grade-up at 4th food (matches C++)
+    food = spawnFood();
+    lastTick = performance.now();
+    shiftPressed = false;
+    updateUI();
+  }
+
+  // ---- update UI text ----
+  function updateUI() {
+    scoreEl.textContent = score;
+    gradeEl.textContent = grade;
+    const boosting = shiftPressed && !gameOver;
+    const eff = boosting ? Math.round(tickMs / 3) : tickMs;
+    speedEl.textContent = eff;
+    boostBadge.style.display = boosting ? 'inline' : 'none';
+  }
+
+  // ---- game update (one tick) ----
+  function tick() {
+    if (!alive || paused) return;
+
+    const boosting = shiftPressed;
+    const effectiveTick = boosting ? tickMs / 3 : tickMs;
+
+    const now = performance.now();
+    if (now - lastTick < effectiveTick) return;
+    lastTick = now;
+
+    const head = snake[snake.length - 1];
+    const next = { x: head.x + dir.x, y: head.y + dir.y };
+
+    // wall collision
+    if (!inBounds(next.x, next.y)) {
+      alive = false;
+      return;
+    }
+
+    const willEat = food && next.x === food.x && next.y === food.y;
+
+    // self collision
+    if (!willEat) {
+      const tail = snake[0];
+      for (let i = 0; i < snake.length; i++) {
+        const p = snake[i];
+        if (p.x === next.x && p.y === next.y &&
+            !(p.x === tail.x && p.y === tail.y)) {
+          alive = false;
+          return;
+        }
+      }
+    } else {
+      for (const p of snake) {
+        if (p.x === next.x && p.y === next.y) {
+          alive = false;
+          return;
+        }
+      }
+    }
+
+    if (!alive) return;
+
+    snake.push(next);
+
+    if (willEat) {
+      score += SCORE_PER_FOOD;
+      totalEaten++;
+      eatenSinceGrade++;
+      if (eatenSinceGrade >= GRADE_EVERY) {
+        eatenSinceGrade -= GRADE_EVERY;
+        grade++;
+      }
+      tickMs = Math.max(TICK_MIN, TICK_INITIAL - totalEaten * TICK_PER_FOOD);
+      food = spawnFood();
+      if (food === null) {
+        alive = false;  // win — no free cells left
+      }
+    } else {
+      snake.shift();
+    }
+
+    updateUI();
+  }
+
+  // ---- render ----
+  function render() {
+    const W = GRID_W * CELL;
+    const H = GRID_H * CELL;
+
+    // background
+    ctx.fillStyle = '#0f0f1a';
+    ctx.fillRect(0, 0, W, H);
+
+    // walls (border ring)
+    ctx.fillStyle = '#3a3a4a';
+    for (let x = 0; x < GRID_W; x++) {
+      fillCell(x, 0);
+      fillCell(x, GRID_H - 1);
+    }
+    for (let y = 1; y < GRID_H - 1; y++) {
+      fillCell(0, y);
+      fillCell(GRID_W - 1, y);
+    }
+
+    // food
+    if (food) {
+      ctx.fillStyle = '#ff8f00';
+      fillCell(food.x, food.y);
+    }
+
+    // snake
+    for (let i = 0; i < snake.length; i++) {
+      const p = snake[i];
+      if (gameOver && i === snake.length - 1) {
+        // red head on game over
+        ctx.fillStyle = '#c80000';
+      } else if (i === snake.length - 1) {
+        ctx.fillStyle = '#00e676';  // bright head
+      } else {
+        // gradient body: brighter near head, darker near tail
+        const t = snake.length > 1 ? i / (snake.length - 1) : 0;
+        const lightness = Math.round(42 - t * 24);
+        ctx.fillStyle = 'hsl(122, 65%, ' + lightness + '%)';
+      }
+      fillCell(p.x, p.y);
+    }
+
+    // pause indicator (two vertical bars, matching C++ layout)
+    if (paused && !gameOver) {
+      const cx = W / 2;
+      const cy = H / 2;
+      ctx.globalAlpha = 0.8;
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(cx - 11, cy - 16, 6, 32);
+      ctx.fillRect(cx + 5, cy - 16, 6, 32);
+      ctx.globalAlpha = 1;
+    }
+
+    // game over overlay
+    if (gameOver) {
+      const barY = (Math.floor(GRID_H / 2) - 1) * CELL;
+      const barH = 3 * CELL;
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+      ctx.fillRect(0, barY, W, barH);
+
+      ctx.fillStyle = '#fff';
+      ctx.font = '600 26px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(gameOverMsg, W / 2, barY + barH / 2 - 4);
+    }
+  }
+
+  // ---- main loop ----
+  function gameLoop() {
+    if (alive) {
+      tick();
+    } else if (!gameOver) {
+      // just died — enter game-over state
+      gameOver = true;
+      const isWin = food === null;
+      gameOverMsg = isWin
+        ? 'You Win!  Score: ' + score + '  Grade: ' + grade
+        : 'Game Over!  Score: ' + score + '  Grade: ' + grade;
+    }
+    render();
+    requestAnimationFrame(gameLoop);
+  }
+
+  // ---- keyboard ----
+  document.addEventListener('keydown', function(e) {
+    const key = e.key;
+
+    if (key === 'Shift') {
+      shiftPressed = true;
+      updateUI();
+      return;
+    }
+
+    // game over: only R works
+    if (gameOver) {
+      if (key === 'r' || key === 'R') {
+        init();
+      }
+      e.preventDefault();
+      return;
+    }
+
+    switch (key) {
+      case 'ArrowUp':
+        if (dir.x !== 0 || dir.y !== 1) dir = { x: 0, y: -1 };
+        break;
+      case 'ArrowDown':
+        if (dir.x !== 0 || dir.y !== -1) dir = { x: 0, y: 1 };
+        break;
+      case 'ArrowLeft':
+        if (dir.x !== 1 || dir.y !== 0) dir = { x: -1, y: 0 };
+        break;
+      case 'ArrowRight':
+        if (dir.x !== -1 || dir.y !== 0) dir = { x: 1, y: 0 };
+        break;
+      case ' ':
+        paused = !paused;
+        if (!paused) lastTick = performance.now();
+        break;
+    }
+
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(key)) {
+      e.preventDefault();
+    }
+  });
+
+  document.addEventListener('keyup', function(e) {
+    if (e.key === 'Shift') {
+      shiftPressed = false;
+      updateUI();
+    }
+  });
+
+  // ---- start ----
+  init();
+  requestAnimationFrame(gameLoop);
+})();
+</script>
+</body>
+</html>
